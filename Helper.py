@@ -70,11 +70,12 @@ def spearmanr_pval(x,y):
 
 
 def corr_finder(df:pd.DataFrame, threshold=0.3, print_corr=True, get_list=False, p_value=False, method='pearson') -> list:
-    '''Returns a list of [corr_value, [i, j]] where [i, j] are the coordinates of the value on the correlation matrix
+    '''Returns a list of [x, y, corr_value[, p_value]] where [x, y] are the coordinates of the value on the correlation matrix
     
     Parameters
-    ---------
+    ----------
     df : pd.DataFrame
+        The dataframe to find correlations in
 
     threshold : float, default=0.3
         The abs(threshold) at which to flag a relationship between two features as being correlated
@@ -89,21 +90,21 @@ def corr_finder(df:pd.DataFrame, threshold=0.3, print_corr=True, get_list=False,
     p_value : bool, default=True
         Prints the corresponding p value of a correlation if print_corr=True, and adds it to the list returned if get_list=True
 
-    method : {'pearson', 'spearman', 'kendall'} or function, default='pearson'
+    method : {'pearson', 'spearman', 'kendall'} or callable, default='pearson'
         The method with which to calculate the correlation matrix
 
     Returns
     -------
-    corr_list: list or None, shape [n_correlations, 3 or 4]
-        List is returned only upon request via get_list.
-        n_correlations = number of correlations found above given threshold
-        3 or 4 columns returned. 3 if p_value=False, 4 if otherwise
+    corr_list: list or None, shape (n_correlations, 3 or 4)
+        List is returned only upon request via get_list in the format [x, y, corr_value[, p_value]]
+        n_correlations = number of correlations found with the given threshold
+        p_value is optional. Returned only if given argument p_value is True
         
     Notes
     -----
     Only accepts DataFrames without categorical features (Or has been OneHotEncoded properly)
     Checks through correlations of the bottom left triangle of the correlation matrix
-    If categorical features are present, coordinates i and j will no longer reflect the correct column coordinates as in df.columns
+    If categorical features are present, coordinates x and y will no longer reflect the correct column coordinates as in df.columns
     '''
     # If the shape of df.corr() is not equal to a square matrix with the len/width equal to df.shape[1], there are categorical features
     assert df.shape[1] == df.shape[1], \
@@ -159,17 +160,18 @@ def corr_finder(df:pd.DataFrame, threshold=0.3, print_corr=True, get_list=False,
 def get_color_map(threshold, inverse=False):
     ''' Returns a color map function for use in DataFrame styling. Colors are mapped based on a given threshold.
     
-    Arguments
-    ---------
-    threshold : int or float
+    Parameters
+    ----------
+    threshold : int, float or list
         When threshold is int or float, colors values >= threshold green, >= 1.5 threshold blue, >= 2 threshold red
+        When a list, it will be taken as it is for green, blue then red respectively
     
     inverse : bool, default=False
         When True, colors values < threshold green, < 1.5 threshold blue, < 2 threshold red
 
     Notes
     -----
-    Pass a list(Of shape (1, 3)) for the threshold to prevent above behaviour. 
+    Pass a list of shape (1, 3) for the threshold to prevent above behaviour. 
     Threshold in index [2] (Color red) takes priority over threshold in index [1] (Color blue).
     E.g. Given threshold [2, 2, 2], color map will map all values above or equal to 2 to be red, and the rest black
     '''
@@ -199,136 +201,236 @@ def get_color_map(threshold, inverse=False):
     return color_map
 
 
-def get_zoutlier(df: pd.DataFrame, column_to_test: str, threshold=4, style=True):
+def get_zoutlier(df, column_to_test, threshold=4, style=True):
     ''' Returns a dataframe of all outlier values in a single column according to given threshold (In sigma) using Z test
     
-    Arguments:
-        column_to_test: A string of the name of the column to be tested in the DataFrame df
-        threshold: The threshold to flag out a value as an outlier (In sigma, the standard deviation of a Z-test)
-        style: True to return a styled DataFrame. False for a normal DataFrame
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The dataframe from which values that exceed the given threshold are found
+
+    column_to_test : str
+        The name of the column to be tested in df
+
+    threshold : int or float, default=4
+        The threshold to flag out a value as an outlier 
+        The units are in sigma, the standard deviation of a Z-test
+        E.g. threshold=2 will flag all values within 2 standard deviations of the mean
+
+    style : bool
+        True to return a styled DataFrame. False for a normal DataFrame
     '''
+
+    # Apply standard scaling to the column
     scaler = StandardScaler()
     scaled_values = scaler.fit_transform(df[column_to_test].values.reshape(-1, 1))
-    outlier_list = [index for index, value in enumerate(scaled_values) if abs(value) > 4]
+
+    # Get list of indices where its value exceeds the reshold
+    outlier_list = [index for index, value in enumerate(scaled_values) if abs(value) > threshold]
+
+    # Construct a dataframe containing both the original and scaled values that were flagged as outliers
     df_outlier = pd.DataFrame(scaler.inverse_transform(scaled_values[outlier_list]), columns=[column_to_test])
     df_outlier[column_to_test + '_scaled'] = scaled_values[outlier_list]
     df_outlier.index = outlier_list
     
+    # Return styled dataframe if requested, normal dataframe if not
     if style:
         return df_outlier.style.applymap(get_color_map(threshold), subset=pd.IndexSlice[:, column_to_test + '_scaled'])
     else:
         return df_outlier
     
     
-def get_multicolumn_zoutlier(df: pd.DataFrame, columns_to_test: list, threshold=4, style=True):
+def get_multicolumn_zoutlier(df, columns_to_test=None, threshold=4, style=True):
     ''' Returns a dataframe of all outlier values in multiple columns according to a given threshold (In sigma) using Z test
     
-    Arguments:
-        columns_to_test: A list of strings of the names of the columns to be tested in the DataFrame df
-        threshold: The threshold to flag out a value as an outlier (In sigma, the standard deviation of a Z-test)
-        style: True to return a styled DataFrame. False for a normal DataFrame
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The dataframe from which values that exceed the given threshold are found
+
+    columns_to_test : list or None, default=None
+        A list of the names of the columns to be tested in df
+        If None, it will go through all of the columns
+
+    threshold : int or float, default=4
+        The threshold to flag out a value as an outlier 
+        The units are in sigma, the standard deviation of a Z-test
+        E.g. threshold=2 will flag all values within 2 standard deviations of the mean
+
+    style : bool, default=True
+        True to return a styled DataFrame. False for a normal DataFrame
     '''
-    temp_df = pd.DataFrame()
+
+    # If no column specified, go through all columns
+    if columns_to_test is None:
+        columns_to_test = df.columns
+
+    df_outliers = pd.DataFrame()
     
+    # Go through all columns and concatenate the results
     for column in columns_to_test:
-        temp_df = pd.concat([temp_df, get_zoutlier(df, column_to_test=column, threshold=threshold, style=False)], axis=1, sort=False)
+        df_outliers = pd.concat([df_outliers, get_zoutlier(df, column_to_test=column, threshold=threshold, style=False)], axis=1, sort=False)
     
+    # Return styled dataframe is requested, normal dataframe if not
     if style:
-        return temp_df.style.applymap(get_color_map(threshold), subset=pd.IndexSlice[:, [column + '_scaled' for column in columns_to_test]])
+        return df_outliers.style.applymap(get_color_map(threshold), subset=pd.IndexSlice[:, [column + '_scaled' for column in columns_to_test]])
     else:
-        return temp_df
+        return df_outliers
 
 
 
-def get_df_missing_data(df: pd.DataFrame) -> pd.DataFrame:
+def get_df_missing_data(df):
     '''Returns a DataFrame documenting all features with missing data (NaN)
 
     Parameters
     ----------
     df : pd.DataFrame
-        A DataFrame containing the features with missing data to be counted
-        and then returned by the function in a new DataFrame
+        A DataFrame containing the features with missing data to be counted and then returned by the function in a new DataFrame
         
     Returns
     -------
-    DataFrame containing: 
-        name of column with missing data
-        index of column with missing data
-        number of missing data in column
-        percentage of missing data in column
+    df_missing_data : pd.DataFrame of shape (n_features_with_missing, 4)
+        Contains 4 columns with:
+        - name of column with missing data
+        - index of column with missing data
+        - number of missing data in column
+        - percentage of missing data in column
     '''
     
     df_missing_data = pd.DataFrame(columns = ['name', 'index', 'number_of_missing_data', 'percentage_missing'])
     
     for index, column in enumerate(df.columns):
+
         # Calculate number and percentage of missing data
         no_of_missing_data = len(df[column]) - df[column].count()
         percentage_missing = no_of_missing_data / len(df) * 100
+
         # Append to DataFrame of missing data if missing data found in current feature
         if no_of_missing_data:
             df_missing_data = df_missing_data.append({'name': df.columns[index], 
                                                       'index': index, 
                                                       'number_of_missing_data': no_of_missing_data, 
                                                       'percentage_missing': percentage_missing}, ignore_index = True)
+
     return df_missing_data
 
 
-def find_diff_pairs_rows(df: pd.DataFrame, index=None, column_index=None, step=1, pair_step=2, print_max=100) -> dict:
+def find_diff_pairs_rows(df, index_range=None, column_index_range=None, step=1, pair_step=2, print_max=100, get_dict=False):
     '''Finds and prints the columns where each pair of rows of data are mismatched (Of different value, ignoring NaN)
     
-    Arguments:
-        index: [start, end] index in the DataFrame to start finding pairs of rows with different columns
-        column_index: [start, end] index of the columns to find differences
-        step: Distance between the first row and the second row in a pair of rows to compare
-        pair_step: Distance between the first row in a pair of rows, and the first row in the next pair
-        print_max: Number of differences this function will print before stopping (0 to disable print)
-    
-    Notes: 
-        For the end index of (index) and (column_index), enter -1 to loop till last index. For (print_max), enter -1 for infinite
-        Does not assert for any invalid values entered as arguments
-    '''
-    # If any end index was given negative 1, set it to the size of the respective axis
-    if index is None:
-        index = [0, df.shape[0]]
-    if column_index is None:
-        column_index = [0, df.shape[1]]
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The dataframe from which to find columns where a pair of rows of data are mismatched
 
-    printed = 0
+    index_range : None or list, of shape (2), default=None
+        [start, end] index in the dataframe to start finding pairs of rows with different columns (axis=0)
+        Inclusive of start, non-inclusive of end
+        If None, go through all rows in the dataframe
+        Total number of rows to compare must be even
+
+    column_index_range : None or list, of shape (2), default=None
+        [stard, end] index of the columns to compare and find differences
+        Inclusive of start, non-inclusive of end
+        If None, go through all columns in the dataframe
+
+    step : int, default=1
+        Distance between the first row and the second row in a pair of rows to compare
+
+    pair_step : int, default=2
+        Distance between the first row in a pair of rows, and the first row in the next pair
+    
+    print_max : int, default=100
+        Number of differences this function will print before stopping
+        0 (or any negative number) will disable all prints
+
+    get_dict : bool, default=False
+        If True, construct and return the dictionary of mismatched rows and the corresponding columns
+
+    Returns
+    -------
+    different_pairs_dict : dict
+        The key is the index of the first row of a pair that had mismatched columns
+        The value is a list of column indices 
+    '''
+
+
+    # If given range is None, go through all available rows/columns respectively
+    if index_range is None:
+        index_range = [0, df.shape[0]]
+    if column_index_range is None:
+        column_index_range = [0, df.shape[1]]
+
+    # Check that the total number of rows is even so that the rows can be divided into pairs to compare columns.
+    assert (index_range[1] - index_range[0] + 1) % 2 == 0, 'Number of rows must be even in order to be compared in pairs'
+
+    different_pairs_count = 0
     different_pairs_dict = dict() 
-    # i and j, where they are the index of the first row and second row in a pair respectively
-    for i, j in zip(range(*index, pair_step), range(step, index[1], pair_step)):
+
+    # first_row and second_row, are the index of the first row and second row in a pair respectively
+    for first_row, second_row in zip(range(*index_range, pair_step), range(step, index_range[1], pair_step)):
         
         # This list is reset every time we move on to a new pair
         different_column_list = list()
-        # k is the index of the column that is currently being checked
-        for k in range(*column_index):
-            if pd.isnull(df.iloc[i, k]) and pd.isnull(df.iloc[j, k]):
+
+        # col_index is the index of the column that is currently being checked
+        for col_index in range(*column_index_range):
+            if pd.isnull(df.iloc[first_row, col_index]) and pd.isnull(df.iloc[second_row, col_index]):
                 continue
                 
             # If a mismatch has been found
-            if df.iloc[i, k] != df.iloc[j, k]:
+            if df.iloc[first_row, col_index] != df.iloc[second_row, col_index]:
                 
                 # Track the names of the columns with mismatched values
-                different_column_list.append(df.columns[k])
+                different_column_list.append(col_index)
                 
-                if printed != print_max:
-                    print('Rows {} and {} have a mismatched value'.format(i, j), 'at column', k, df.columns[k])
-                    printed += 1
-                    
-        # If there were different column values detected earlier, log into different_pairs_dict
+        # Print all the mismatched columns for this pair of rows as long as we have not yet reached the limit to print     
+        if different_pairs_count < print_max:
+            print('Rows {} and {} have a mismatched value'.format(first_row, second_row), 'at columns', different_column_list, df.columns[different_column_list])
+
+        # If a pair of rows with different columns was found, increment the counter
         if len(different_column_list) != 0:
-            different_pairs_dict[i] = different_column_list
-        
-    if print_max == 0:
-        pass
-    elif printed == print_max:
+            different_pairs_count += 1
+                    
+        # If there were different column values detected earlier, log into different_pairs_dict. Log only if the dict is requested
+        if len(different_column_list) != 0 and get_dict == True:
+            different_pairs_dict[first_row] = different_column_list
+    
+    # If there were more different pairs found than printed, and printing was enabled (By having print_max > 0) 
+    # print '...' to indicate more pairs were found than printed
+    if different_pairs_count > print_max and print_max > 0:
         print('...')
         
-    return different_pairs_dict
+    # Return the dictionary only if requested
+    if get_dict == True:
+        return different_pairs_dict
 
 
 def plot_scree_plot(pca, plot_cumul=True, figsize=None, ax=None):
     '''For visualising percentage of variance explained by each PC
+
+    Parameters
+    ----------
+    pca : PCA
+        Principal Component Analysis object form Sci-kit Learn
+
+    plot_cumul : bool, default=True
+        Whether to also plot the cumulative line of explained variance
+
+    figsize : tuple, default=None
+        Defaults to (12, 8)
+        As per matplotlib
+
+    ax : axes
+        The Axes object on which to plot the scree plot
+
+    Returns
+    -------
+    pca_var : array, shape (n_components)
+        An array of the explained variance ratio
+
+    cumulative_pca_var : array, shape (n_components)
+        The cumulated explained variance ratio
     '''
     
     if figsize is None:
@@ -339,27 +441,49 @@ def plot_scree_plot(pca, plot_cumul=True, figsize=None, ax=None):
     
     pca_var = pca.explained_variance_ratio_
     
+    # Set limits and plot explained variance ratio
     ax.set_xlim(1, len(pca_var))
     ax.set_ylim(0, 1)
     ax.plot(list(range(1, len(pca_var) + 1)), pca_var, '-o')
     
+    # If requested, plot the cumulative explained variance ratio
     if plot_cumul:
         cumulative_pca_var = [sum(pca_var[:i]) for i in range(1, len(pca_var) + 1)]
         ax.plot(list(range(1, len(pca_var) + 1)), cumulative_pca_var, '-o')
         return pca_var, cumulative_pca_var
-    
+    # If cumulative plot was not requested, return only the explained variance ratio
     else:
         return pca_var
 
 
-def plot_2d(df_pca, labels, columns_index: list=None, figsize=None, ax=None, **kwargs):
-    '''Plots a 2D projection of given dataframe that has undergone PCA. Plots columns passed in
+def plot_2d(df_pca, labels, columns_index=None, figsize=None, ax=None, **kwargs):
+    '''Plots a 2D projection of given dataframe. Plots the columns passed in
     
-    Arguments:
-        df_pca: A dataframe containing all the values, in PC axes, of each row of data
-        labels: An iterable that contains the labels/groups that each data point falls under
-        figsize: A tuple that decides size of the figure
-        dpi: dpi of the figure to be drawn
+    Can take dataframes of any shape, but will always plot a 2D scatter of the indicated columns
+    Originally intended for dataframes that have undergone dimentionality reduction
+
+    Parameters
+    ----------
+    df_pca : pd.DataFrame
+        A dataframe containing all the values, in PC axes, of each row of data
+    
+    labels : array-like
+        An iterable that contains the labels/groups that each data point falls under
+        Used to color different points
+
+    columns_index : list, shape (3), default=None
+        Defaults to [0, 1]
+    
+    figsize : tuple, shape (2), default=None
+        Defaults to (12, 8)
+        As per matplotlib
+
+    ax : Axes, default=None
+        The axes on which to plot the scatter plot
+        If None, it will create its own plot and axis
+        
+    **kwargs :
+        Any keyword argument passed to axes.scatter
     '''
     if figsize is None:
         figsize = (16, 12)
@@ -372,18 +496,38 @@ def plot_2d(df_pca, labels, columns_index: list=None, figsize=None, ax=None, **k
         columns_index = [0, 1]
     
     ax.scatter(df_pca.iloc[:, columns_index[0]], df_pca.iloc[:, columns_index[1]], c=labels, **kwargs)
-    ax.set_xlabel('PC' + str(columns_index[0]+1))
-    ax.set_ylabel('PC' + str(columns_index[1]+1))
+    ax.set_xlabel('Component' + str(columns_index[0]+1))
+    ax.set_ylabel('Component' + str(columns_index[1]+1))
 
 
-def plot_3d(df_pca, labels, columns_index: list=None, figsize=None, ax=None, **kwargs):
-    '''Plots a 3D projection of given dataframe that has undergone PCA. Plots columns passed in
+def plot_3d(df_pca, labels, columns_index=None, figsize=None, ax=None, **kwargs):
+    '''Plots a 3D projection of given dataframe. Plots the columns passed in
+
+    Can take dataframes of any shape, but will always plot a 3D scatter of the indicated columns
+    Originally intended for dataframes that have undergone dimentionality reduction
+
+    Parameters
+    ----------
+    df_pca : pd.DataFrame
+        A dataframe containing all the values, in PC axes, of each row of data
     
-    Arguments:
-        df_pca: A dataframe containing all the values, in PC axes, of each row of data
-        labels: An iterable that contains the labels/groups that each data point falls under
-        figsize: A tuple that decides size of the figure
-        dpi: dpi of the figure to be drawn
+    labels : array-like
+        An iterable that contains the labels/groups that each data point falls under
+        Used to color different points
+
+    columns_index : list, shape (3), default=None
+        Defaults to [0, 1, 2]
+    
+    figsize : tuple, shape (2), default=None
+        Defaults to (12, 8)
+        As per matplotlib
+
+    ax : Axes, default=None
+        The axes on which to plot the scatter plot
+        If None, it will create its own plot and axis
+        
+    **kwargs :
+        Any keyword argument passed to axes.scatter
     '''
     if figsize is None:
         figsize = (16, 12)
